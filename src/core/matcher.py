@@ -28,8 +28,15 @@ class FuzzyMatcher:
     def _initialize_algorithms(self):
         """Initialize the mapping of algorithm names to their implementations."""
         self._algorithm_map = {
-            # FuzzyWuzzy algorithms
-            'ratio': fuzz.ratio,
+            # Main algorithms
+            'levenshtein': fuzz.ratio,
+            'jaro_winkler': self._jaro_winkler_similarity,
+            'jaccard': self._jaccard_similarity,
+            'cosine': self._cosine_similarity,
+            'soundex': self._soundex_similarity,
+            'weighted': self.calculate_weighted_algorithms,
+            
+            # Additional FuzzyWuzzy algorithms
             'partial_ratio': fuzz.partial_ratio,
             'token_sort_ratio': fuzz.token_sort_ratio,
             'token_set_ratio': fuzz.token_set_ratio,
@@ -37,11 +44,6 @@ class FuzzyMatcher:
             'token_sort_partial': fuzz.partial_token_sort_ratio,
             
             # Custom implementations
-            'jaro_winkler': self._jaro_winkler_similarity,
-            'soundex': self._soundex_similarity,
-            'metaphone': self._metaphone_similarity,
-            'cosine': self._cosine_similarity,
-            'jaccard': self._jaccard_similarity,
             'ngram': self._ngram_similarity,
             'hybrid': self._hybrid_similarity
         }
@@ -174,7 +176,22 @@ class FuzzyMatcher:
         """Calculate similarity score between two strings."""
         if not str1 or not str2:
             return 0.0
-        return self._algorithm_map[self.algorithm](str1, str2)
+            
+        try:
+            if self.algorithm == 'weighted':
+                # For weighted algorithm, get the current weights from the instance
+                algorithm_weights = getattr(self, 'algorithm_weights', {
+                    'levenshtein': 1.0,
+                    'jaro_winkler': 1.0,
+                    'jaccard': 1.0,
+                    'cosine': 1.0,
+                    'soundex': 1.0
+                })
+                return self._algorithm_map[self.algorithm](str1, str2, algorithm_weights)
+            return self._algorithm_map[self.algorithm](str1, str2)
+        except KeyError:
+            # Fallback to Levenshtein if algorithm not found
+            return self._algorithm_map['levenshtein'](str1, str2)
 
     def _calculate_weighted_score(self, record1: Dict[str, str], 
                                 record2: Dict[str, str], 
