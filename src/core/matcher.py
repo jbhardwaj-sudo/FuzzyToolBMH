@@ -24,6 +24,8 @@ class FuzzyMatcher:
         self.threshold = threshold
         self.max_matches = max_matches
         self._initialize_algorithms()
+        # Initialize TF-IDF vectorizer once
+        self.vectorizer = TfidfVectorizer(lowercase=True)
         
     def _initialize_algorithms(self):
         """Initialize the mapping of algorithm names to their implementations."""
@@ -57,11 +59,44 @@ class FuzzyMatcher:
         return self._normalize_score(jaro_winkler_similarity(str1, str2))
 
     def _soundex_similarity(self, str1: str, str2: str) -> float:
-        """Calculate similarity using Soundex phonetic algorithm."""
+        """Calculate similarity using Soundex phonetic algorithm with enhanced matching."""
         try:
-            return 100 if soundex(str1) == soundex(str2) else 0
+            # Split into words and get best match for multi-word strings
+            words1 = str(str1).lower().split()
+            words2 = str(str2).lower().split()
+            
+            if not words1 or not words2:
+                return 0.0
+                
+            # Calculate soundex codes for each word
+            codes1 = [soundex(w) for w in words1 if w]
+            codes2 = [soundex(w) for w in words2 if w]
+            
+            # If any codes match exactly, count as high similarity
+            if any(c1 == c2 for c1 in codes1 for c2 in codes2):
+                return 100.0
+                
+            # For partial matches, calculate similarity based on shared prefixes
+            total_score = 0
+            count = 0
+            
+            for c1 in codes1:
+                for c2 in codes2:
+                    # Calculate how many characters match from the start
+                    match_length = 0
+                    for i in range(min(len(c1), len(c2))):
+                        if c1[i] == c2[i]:
+                            match_length += 1
+                        else:
+                            break
+                    # Score based on matching prefix length
+                    score = (match_length / max(len(c1), len(c2))) * 100
+                    total_score += score
+                    count += 1
+            
+            return total_score / count if count > 0 else 0.0
         except:
-            return 0
+            return 0.0
 
     def _metaphone_similarity(self, str1: str, str2: str) -> float:
         """Calculate similarity using Metaphone phonetic algorithm."""
@@ -76,26 +111,123 @@ class FuzzyMatcher:
 
     def _jaccard_similarity(self, str1: str, str2: str) -> float:
         """Calculate Jaccard similarity between two strings."""
-        set1 = self._get_word_set(str1)
-        set2 = self._get_word_set(str2)
-        
-        if not set1 or not set2:
-            return 0.0
+        try:
+            # Convert to strings and normalize
+            str1 = str(str1).lower().strip()
+            str2 = str(str2).lower().strip()
             
-        intersection = len(set1.intersection(set2))
-        union = len(set1.union(set2))
-        
-        return self._normalize_score(intersection / union if union > 0 else 0)
+            # Handle exact matches
+            if str1 == str2:
+                return 100.0
+                
+            # Clean and tokenize strings
+            # Remove punctuation and split on whitespace
+            words1 = set(re.findall(r'\w+', str1))
+            words2 = set(re.findall(r'\w+', str2))
+            
+            if not words1 or not words2:
+                return 0.0
+                
+            # Calculate intersection and union
+            intersection = len(words1.intersection(words2))
+            union = len(words1.union(words2))
+            
+            # Calculate base Jaccard similarity score with a boost
+            base_score = (intersection / union if union > 0 else 0) * 100
+            
+            # Boost the base score for significant word overlap
+            if intersection > 0:
+                # Boost based on percentage of matching words
+                boost = (intersection / min(len(words1), len(words2))) * 30
+                base_score = min(100, base_score + boost)
+            
+            # Look for partial matches even if we have some exact matches
+            for word1 in words1:
+                for word2 in words2:
+                    # Check if words are substrings of each other
+                    if len(word1) >= 3 and len(word2) >= 3:  # Only consider words of 3+ chars
+                        if word1 in word2 or word2 in word1:
+                            base_score = max(base_score, 70.0)  # Higher boost for partial matches
+                        elif len(word1) > 4 and len(word2) > 4:
+                            # For longer words, check character overlap
+                            overlap = len(set(word1) & set(word2))
+                            if overlap >= 3:  # If at least 3 characters match
+                                overlap_ratio = overlap / max(len(word1), len(word2))
+                                if overlap_ratio > 0.6:  # Reduced threshold
+                                    base_score = max(base_score, 60.0)
+            
+            return base_score
+        except:
+            return 0.0
 
     def _cosine_similarity(self, str1: str, str2: str) -> float:
         """Calculate Cosine similarity between two strings using TF-IDF."""
         try:
-            vectorizer = TfidfVectorizer(lowercase=True)
-            tfidf_matrix = vectorizer.fit_transform([str1, str2])
-            similarity = 1 - cosine(tfidf_matrix.toarray()[0], tfidf_matrix.toarray()[1])
-            return self._normalize_score(similarity)
+            # Convert to strings and normalize
+            str1 = str(str1).lower().strip()
+            str2 = str(str2).lower().strip()
+            
+            # Handle exact matches
+            if str1 == str2:
+                return 100.0
+                
+            # Skip empty strings
+            if not str1 or not str2:
+                return 0.0
+                
+            # Clean and tokenize strings
+            words1 = re.findall(r'\w+', str1)
+            words2 = re.findall(r'\w+', str2)
+            
+            if not words1 or not words2:
+                return 0.0
+                
+            # Create word frequency dictionaries
+            word_freq1 = {}
+            word_freq2 = {}
+            
+            # Calculate word frequencies
+            unique_words = set(words1 + words2)
+            for word in unique_words:
+                # Add tf-idf like weighting - longer words get higher weight
+                word_weight = 1.0 + (len(word) / 10.0 if len(word) > 3 else 0)
+                word_freq1[word] = words1.count(word) * word_weight
+                word_freq2[word] = words2.count(word) * word_weight
+            
+            # Calculate dot product and magnitudes
+            dot_product = sum(word_freq1.get(word, 0) * word_freq2.get(word, 0) 
+                            for word in unique_words)
+            
+            magnitude1 = (sum(freq * freq for freq in word_freq1.values())) ** 0.5
+            magnitude2 = (sum(freq * freq for freq in word_freq2.values())) ** 0.5
+            
+            if magnitude1 == 0 or magnitude2 == 0:
+                return 0.0
+            
+            # Calculate base cosine similarity score
+            base_score = (dot_product / (magnitude1 * magnitude2)) * 100
+            
+            # Enhanced partial matching
+            if base_score < 30:  # Lower threshold for partial matching
+                max_partial_score = 0
+                for word1 in words1:
+                    for word2 in words2:
+                        if len(word1) >= 3 and len(word2) >= 3:
+                            # Direct substring match
+                            if word1 in word2 or word2 in word1:
+                                max_partial_score = max(max_partial_score, 50.0)
+                            # Character overlap for longer words
+                            elif len(word1) > 4 and len(word2) > 4:
+                                overlap = len(set(word1) & set(word2))
+                                overlap_ratio = overlap / max(len(word1), len(word2))
+                                if overlap_ratio > 0.7:
+                                    max_partial_score = max(max_partial_score, 40.0)
+                
+                base_score = max(base_score, max_partial_score)
+            
+            return base_score
         except:
-            return 0
+            return 0.0
 
     def _ngram_similarity(self, str1: str, str2: str, n: int = 2) -> float:
         """Calculate n-gram similarity between two strings."""
@@ -152,25 +284,55 @@ class FuzzyMatcher:
         Returns:
             Weighted similarity score (0-100)
         """
-        scores = {
-            'levenshtein': fuzz.ratio(str1, str2),
-            'jaro_winkler': self._jaro_winkler_similarity(str1, str2),
-            'jaccard': self._jaccard_similarity(str1, str2),
-            'cosine': self._cosine_similarity(str1, str2),
-            'soundex': self._soundex_similarity(str1, str2)
-        }
-        
-        total_weight = sum(algorithm_weights.values())
-        if total_weight == 0:
-            return 0.0
+        try:
+            # Early exit for empty strings
+            if not str1 or not str2:
+                return 0.0
+
+            # Convert inputs to strings and normalize
+            str1, str2 = str(str1).strip(), str(str2).strip()
             
-        weighted_sum = sum(
-            scores[algo] * weight 
-            for algo, weight in algorithm_weights.items() 
-            if algo in scores
-        )
-        
-        return weighted_sum / total_weight
+            # Quick exact match check
+            if str1 == str2:
+                return 100.0
+
+            # Calculate Levenshtein first as it's typically fastest
+            if algorithm_weights.get('levenshtein', 0) > 0:
+                lev_score = fuzz.ratio(str1, str2)
+                # Early exit if perfect match found
+                if lev_score == 100:
+                    return 100.0
+                # Early exit if score too low
+                if lev_score < 30:  # Threshold for early termination
+                    return lev_score
+            
+            scores = {}
+            total_weight = 0.0
+            
+            # Sort algorithms by speed (fastest first)
+            ordered_algorithms = [
+                ('levenshtein', fuzz.ratio),
+                ('jaro_winkler', self._jaro_winkler_similarity),
+                ('soundex', self._soundex_similarity),
+                ('jaccard', self._jaccard_similarity),
+                ('cosine', self._cosine_similarity)
+            ]
+            
+            # Only process algorithms with weights > 0
+            for algo_name, algo_func in ordered_algorithms:
+                weight = algorithm_weights.get(algo_name, 0)
+                if weight > 0:
+                    score = algo_func(str1, str2)
+                    if score > 0:  # Only include non-zero scores
+                        scores[algo_name] = score * weight
+                        total_weight += weight
+            
+            if total_weight == 0:
+                return 0.0
+            
+            return sum(scores.values()) / total_weight
+        except:
+            return 0.0
 
     def _calculate_similarity(self, str1: str, str2: str) -> float:
         """Calculate similarity score between two strings."""
@@ -199,13 +361,33 @@ class FuzzyMatcher:
         """Calculate weighted similarity score across multiple fields."""
         total_score = 0.0
         total_weight = sum(weights.values())
+        field_scores = {}
         
+        # First calculate individual field scores
         for field, weight in weights.items():
             if field in record1 and field in record2:
                 field_score = self._calculate_similarity(str(record1[field]), str(record2[field]))
+                field_scores[field] = field_score
                 total_score += (field_score * weight)
         
-        return total_score / total_weight if total_weight > 0 else 0.0
+        weighted_avg = total_score / total_weight if total_weight > 0 else 0.0
+        
+        # Special handling for address matching
+        if 'address' in weights:
+            address_score = field_scores.get('address', 0)
+            # If address score is high enough, boost the overall score
+            if address_score >= self.threshold:
+                other_fields_match = True
+                # Check if other fields (city, state) are reasonable matches (>50%)
+                for field in ['city', 'state']:
+                    if field in weights and field_scores.get(field, 0) < 50:
+                        other_fields_match = False
+                        break
+                if other_fields_match:
+                    # Boost the score based on strong address match
+                    return max(weighted_avg, address_score * 0.9)
+        
+        return weighted_avg
 
     def find_matches(self, source_df: pd.DataFrame, 
                     reference_df: pd.DataFrame, 

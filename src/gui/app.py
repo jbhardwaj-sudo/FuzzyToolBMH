@@ -196,6 +196,8 @@ class FuzzyMatchApp:
         style.configure("TCombobox", font=("", 11))
         style.configure("Treeview", font=("", 11))
         style.configure("Treeview.Heading", font=("", 11, "bold"))
+        # Configure tab font size
+        style.configure("TNotebook.Tab", font=("", 10))  # Set smaller font size for tabs without bold
         
         # Core algorithms with descriptions
         core_algorithms = [
@@ -208,6 +210,7 @@ class FuzzyMatchApp:
 
         # Create weight sliders
         self.weight_vars = {}
+        self.weight_labels = {}  # Store labels for updating
         
         for idx, (name, algo_id, desc) in enumerate(core_algorithms):
             # Algorithm container
@@ -215,11 +218,11 @@ class FuzzyMatchApp:
             algo_container.grid(row=idx, column=0, sticky='ew', pady=2)
             algo_container.grid_columnconfigure(1, weight=1)
             
-            # Algorithm name and description
+            # Algorithm name and description with number
             name_frame = ttk.Frame(algo_container)
             name_frame.grid(row=0, column=0, padx=5)
             
-            ttk.Label(name_frame, text=name).grid(row=0, column=0, sticky='w')
+            ttk.Label(name_frame, text=f"{idx+1}. {name}").grid(row=0, column=0, sticky='w')
             ttk.Label(name_frame, text=desc).grid(row=1, column=0, sticky='w')
             
             # Slider container
@@ -227,11 +230,11 @@ class FuzzyMatchApp:
             slider_container.grid(row=0, column=1, sticky='ew', padx=10)
             slider_container.grid_columnconfigure(0, weight=1)
             
-            # Weight variable
+            # Create IntVar for the slider
             var = tk.IntVar(value=1)
             self.weight_vars[algo_id] = var
             
-            # Create compact slider
+            # Create slider
             scale = ttk.Scale(
                 slider_container,
                 from_=0,
@@ -242,11 +245,29 @@ class FuzzyMatchApp:
             )
             scale.grid(row=0, column=0, sticky='ew')
             
-            # Weight value label
-            value_label = ttk.Label(slider_container, textvariable=var, width=2, font=('', 10, 'bold'))
-            value_label.grid(row=0, column=1, padx=(5, 0))
+            # Create value label
+            value_label = ttk.Label(
+                slider_container,
+                text="1",
+                width=2,
+                font=('', 11, 'bold'),
+                anchor='e'
+            )
+            value_label.grid(row=0, column=1, padx=(5, 10))
             
-            # Remove number labels to keep the UI clean
+            # Create update function specific to this slider
+            def make_update_func(v, lbl):
+                def update(*args):
+                    try:
+                        value = int(v.get())
+                        lbl.configure(text=str(value))
+                    except:
+                        lbl.configure(text="1")
+                return update
+            
+            # Bind the update function
+            update_func = make_update_func(var, value_label)
+            var.trace_add("write", update_func)
 
         # Info label for weights
         ttk.Label(
@@ -277,8 +298,16 @@ class FuzzyMatchApp:
         )
         threshold_scale.grid(row=0, column=0, sticky='ew')
         
+        # Create StringVar for formatted threshold display
+        self.threshold_display_var = tk.StringVar()
+        def update_threshold_display(*args):
+            value = int(self.threshold_var.get())
+            self.threshold_display_var.set(str(value))
+        self.threshold_var.trace_add("write", update_threshold_display)
+        update_threshold_display()  # Initial update
+        
         # Threshold value label
-        ttk.Label(threshold_container, textvariable=self.threshold_var, font=('', 10, 'bold')).grid(row=0, column=1, padx=(5,0))
+        ttk.Label(threshold_container, textvariable=self.threshold_display_var, font=('', 11, 'bold'), width=3, anchor='e').grid(row=0, column=1, padx=(5, 10), sticky='e')
         
         # Remove threshold numbers to keep the UI clean
         
@@ -301,8 +330,8 @@ class FuzzyMatchApp:
             button_frame,
             text="Save Configuration",
             command=self.save_configuration,
-            height=28,  # Set consistent button height
-            font=("", 11)  # Set consistent font size
+            height=25,  # Reduced button height
+            font=("", 10)  # Reduced font size
         )
         save_btn.pack()
         
@@ -326,8 +355,8 @@ class FuzzyMatchApp:
             file_frame,
             text="Browse",
             command=lambda: self.browse_file(self.source_path_var),
-            height=28,
-            font=("", 11)
+            height=25,
+            font=("", 10)
         ).grid(row=0, column=2)
         
         # Reference file
@@ -340,8 +369,8 @@ class FuzzyMatchApp:
             file_frame,
             text="Browse",
             command=lambda: self.browse_file(self.ref_path_var),
-            height=28,
-            font=("", 11)
+            height=25,
+            font=("", 10)
         ).grid(row=1, column=2)
         
         file_frame.columnconfigure(1, weight=1)
@@ -403,8 +432,8 @@ class FuzzyMatchApp:
             controls_frame,
             text="Add Column Pair",
             command=self.add_column_pair,
-            height=28,
-            font=("", 11)
+            height=25,
+            font=("", 10)
         )
         add_pair_btn.grid(row=0, column=8, padx=5)
         
@@ -412,8 +441,8 @@ class FuzzyMatchApp:
             controls_frame,
             text="Remove Selected",
             command=self.remove_column_pair,
-            height=28,
-            font=("", 11)
+            height=25,
+            font=("", 10)
         )
         remove_pair_btn.grid(row=0, column=9, padx=5)
         
@@ -425,8 +454,8 @@ class FuzzyMatchApp:
             tab,
             text="Run Matching",
             command=self.run_matching,
-            height=28,
-            font=("", 11)
+            height=25,
+            font=("", 10)
         )
         run_btn.pack(pady=10)
         
@@ -626,6 +655,9 @@ class FuzzyMatchApp:
             # Run matching
             results = []
             
+            # Get global threshold
+            global_threshold = self.threshold_var.get()
+            
             # Create source record lookup for faster access
             source_records = source_df_temp.to_dict('index')
             ref_records = ref_df_temp.to_dict('index')
@@ -641,36 +673,50 @@ class FuzzyMatchApp:
                     total_weight = 0
                     
                     # Calculate weighted score for each column pair
+                    pair_scores = {}
+                    total_weighted_threshold = 0
+                    
                     for source_col, ref_col, weight in column_pairs:
                         source_val = str(source_record[source_col])
                         ref_val = str(ref_record[ref_col])
                         
                         # Calculate similarity for this column pair
                         pair_score = self.matcher._calculate_similarity(source_val, ref_val)
-                        # Check if this pair's score meets its threshold
+                        pair_scores[(source_col, ref_col)] = pair_score
+                        
+                        # Each pair must meet its own exact threshold
                         pair_threshold = pair_thresholds[(source_col, ref_col)]
-                        if pair_score < pair_threshold:
-                            # If any column pair fails its threshold, skip this match
-                            record_matches = []
-                            break
-                        total_score += pair_score * weight
-                        total_weight += weight
+                        if pair_score >= pair_threshold:  # Exact threshold match required
+                            total_score += pair_score * weight
+                            total_weight += weight
                     
-                    # Calculate final weighted score
-                    if total_weight > 0:
+                    # All pairs must meet their individual thresholds
+                    all_thresholds_met = True
+                    for (source_col, ref_col) in pair_scores:
+                        if pair_scores[(source_col, ref_col)] < pair_thresholds[(source_col, ref_col)]:
+                            all_thresholds_met = False
+                            break
+
+                    # Calculate final score only if all thresholds are met
+                    if total_weight > 0 and all_thresholds_met:
                         final_score = total_score / total_weight
-                        if final_score >= self.threshold_var.get():
-                            record_matches.append((ref_idx, final_score))
+                        # Store the match with individual scores
+                        record_matches.append({
+                            'ref_idx': ref_idx,
+                            'final_score': final_score,
+                            'pair_scores': pair_scores
+                        })
                 
                 # Sort matches by score and take top N
-                record_matches.sort(key=lambda x: x[1], reverse=True)
+                record_matches.sort(key=lambda x: x['final_score'], reverse=True)
                 top_matches = record_matches[:self.max_matches_var.get()]
                 
                 # Add matches to results
-                for ref_idx, score in top_matches:
+                for match in top_matches:
                     # Start with match metadata and pair-specific scores
+                    ref_idx = match['ref_idx']
                     match_data = {
-                        'Overall_Match_Score': score,
+                        'Overall_Match_Score': match['final_score'],
                         'Source_Row': idx,
                         'Reference_Row': ref_idx
                     }
@@ -792,8 +838,8 @@ class FuzzyMatchApp:
             tab,
             text="Apply Geo Refinement",
             command=self.process_geo_refinement,
-            height=28,
-            font=("", 11)
+            height=25,
+            font=("", 10)
         )
         process_btn.pack(pady=10)
         
